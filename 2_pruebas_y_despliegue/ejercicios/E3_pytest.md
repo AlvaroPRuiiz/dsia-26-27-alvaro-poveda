@@ -40,9 +40,11 @@ Un test que lea el `ventas.csv` real del curso, marcado:
 
 ```python
 @pytest.mark.integration
-def test_csv_curso_tiene_ocho_validas():
+def test_csv_curso_tiene_140_validas_y_10_invalidas():
     ...
 ```
+
+**Checkpoint del CSV del curso:** **140 válidas** y **10 inválidas**.
 
 Ejecuta:
 
