@@ -168,7 +168,7 @@ Copia y adapta: [`ejemplos/ci_proyecto_i.yml`](ejemplos/ci_proyecto_i.yml) → `
 1. Instalar desde `requirements.txt` (incluye `pytest`, `pytest-cov`, `pandas`, …).
 2. Ejecutar tests del Proyecto I.
 3. Exigir **cobertura ≥ 60 %** (`--cov-fail-under=60`).
-4. Fallar el workflow si algo de lo anterior falla.
+4. Cambiar el workflow si algo de lo anterior falla.
 
 ### Evidencia de entrega
 
