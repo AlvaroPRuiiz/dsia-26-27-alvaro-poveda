@@ -24,8 +24,8 @@ Al terminar la sesión **debes** ser capaz de:
 
 4. Distinguir tests unitarios, de integración y E2E (pirámide).
 5. Marcar integración (`@pytest.mark.integration`) y filtrar con `-m`.
-6. Entender qué hace el workflow de CI del curso.
-7. Llevar ≥ 8 tests al validador del Proyecto I.
+6. Entender qué hace el workflow de CI del curso (detalle en [`02_ci_github.md`](02_ci_github.md)).
+7. Llevar ≥ 8 tests al validador del Proyecto I y dejar **CI verde**.
 
 ---
 
@@ -369,6 +369,9 @@ def test_load_csv_ok(tmp_path):
 
 ## B6. CI del curso (gate de merge)
 
+Resumen breve: el repo de la asignatura ya tiene Actions.  
+**Guía completa + plantilla para tu Proyecto I:** [`02_ci_github.md`](02_ci_github.md) y ejercicio [`ejercicios/E4_ci_github.md`](ejercicios/E4_ci_github.md).
+
 Abre [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
 Idea:
@@ -382,9 +385,8 @@ Tu README del proyecto debería documentar:
 ```bash
 pytest -q
 pytest -q -m "not integration"
+pytest -q --cov=ventas_app --cov=internet_app --cov-fail-under=60
 ```
-
-Sin esa línea, el compañero (y el profesor) no saben cómo verificar.
 
 ---
 

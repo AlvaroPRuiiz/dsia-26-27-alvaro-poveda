@@ -71,7 +71,7 @@ En las sesiones lectivas: **30 min exposición + 30 min ejercicios** + ~45 min d
 | **7 sep** | Presentación + entornos virtuales Python + Git/GitHub | `1_programacion_avanzada_python/01_entornos_y_git.md` |
 | **14 sep** | Pandas + ejercicios + presentación Proyecto I | `1_programacion_avanzada_python/02_pandas_datos.ipynb` |
 | **21 sep** | Arquitectura, Clean Code y SOLID + ejercicios | `1_programacion_avanzada_python/03_arquitectura_patrones.md` |
-| **28 sep** | pytest + ejercicios | `2_pruebas_y_despliegue/` |
+| **28 sep** | pytest + CI (GitHub Actions) + ejercicios | `2_pruebas_y_despliegue/` |
 | **5 oct** | Data flows + proyecto | `3_automatizacion_e_ia/` |
 | **19 oct** | APIs de IA + presentación Trabajo Final | `3_automatizacion_e_ia/` · `proyectos/proyecto_iii/` |
 | **26 oct** | E2E I: arquitectura del flujo | `5_desarrollo_end_to_end/` |

@@ -1,8 +1,8 @@
 # Proyecto I — Programación avanzada en Python (10 %)
 
-**Temas:** 1 (y pytest del Tema 2)  
+**Temas:** 1 (y pytest + CI del Tema 2)  
 **Presentación / arranque en clase:** 14 de septiembre de 2026  
-**Entrega orientativa:** tras la sesión de pytest (**28 sep 2026**), salvo indicación distinta en aula.
+**Entrega orientativa:** tras la sesión de pytest/CI (**28 sep 2026**), salvo indicación distinta en aula.
 
 ## Objetivo
 
@@ -13,6 +13,7 @@ Desarrollar **dos** soluciones en Python que demuestren:
 - Tratamiento de errores
 - Validación y manipulación de datos
 - **Tests unitarios con pytest**
+- **CI con GitHub Actions** (validación automática del código)
 - Buenas prácticas y documentación
 
 **Las dos partes son obligatorias** y entran en la misma nota del Proyecto I (10 %).
@@ -27,7 +28,8 @@ Construye un **pipeline de calidad de datos de ventas** a partir de `Datos/venta
 2. Métricas de negocio (importe por región/producto, etc.).
 3. CLI usable (`python -m ...`).
 4. **Tests** de **todos** los módulos: `loader`, `validator`, `metrics` y `cli`.
-5. README + docstrings.
+5. **CI** en GitHub Actions (pytest + cobertura ≥ 60 %).
+6. README + docstrings.
 
 Estructura orientativa (la de clase):
 
@@ -58,6 +60,7 @@ Repite el **mismo tipo de solución** (carga → validación → métricas → C
 4. Define **reglas de validación propias** (nulos, rangos, tipos, duplicados, etc.) acordes al dominio elegido.
 5. Calcula **al menos 3 métricas / agregaciones** con sentido para esos datos.
 6. Incluye **tests** de **todos** los módulos: `loader`, `validator`, `metrics` y `cli`.
+7. El mismo **CI** del repo debe validar también esta parte (mismo workflow).
 
 ### Qué se evalúa de más en la Parte B
 
@@ -65,7 +68,7 @@ Repite el **mismo tipo de solución** (carga → validación → métricas → C
 - Que el diseño no sea un copiar-pegar ciego: adaptas nombres, reglas y métricas al nuevo dominio.
 - Reutilización sensata de ideas de la Parte A (módulos, excepciones, CLI, tests) sin acoplar ambos pipelines en un solo “mega-script”.
 
-Estructura orientativa:
+Estructura orientativa (misma forma que la Parte A):
 
 ```text
 internet_app/          # o el nombre de tu dominio
@@ -80,11 +83,48 @@ tests/
   test_cli.py
 ```
 
+### Estructura del repositorio (A + B juntas)
+
+Ambas partes siguen el **mismo patrón**. En la práctica, separa tests por paquete para no mezclarlos:
+
+```text
+proyecto_i/
+  ventas_app/
+    loader.py
+    validator.py
+    metrics.py
+    cli.py
+  internet_app/            # o el nombre de tu dominio
+    loader.py
+    validator.py
+    metrics.py
+    cli.py
+  tests/
+    ventas/
+      test_loader.py
+      test_validator.py
+      test_metrics.py
+      test_cli.py
+    internet/              # o el nombre de tu dominio
+      test_loader.py
+      test_validator.py
+      test_metrics.py
+      test_cli.py
+  data/
+    dateset.csv
+  .github/workflows/ci.yml
+  requirements.txt
+  README.md
+```
+
+(El workflow `.github/workflows/ci.yml` es **único** para el repo y cubre A + B.)
+
 ---
 
 ## Tests unitarios (obligatorio en A y B)
 
-Referencia de clase: `2_pruebas_y_despliegue/01_pytest_intro.md` y `ejercicios/E3_pytest.md`.
+Referencia de clase: `2_pruebas_y_despliegue/01_pytest_intro.md` y `ejercicios/E3_pytest.md`.  
+CI (siguiente bloque): `2_pruebas_y_despliegue/02_ci_github.md` y `ejercicios/E4_ci_github.md`.
 
 ### Cobertura obligatoria por módulo (A y B)
 
@@ -129,6 +169,22 @@ Sin tests en verde de **loader + validator + metrics + cli** (en A y en B), o si
 
 ---
 
+## CI con GitHub Actions (obligatorio)
+
+Referencia de clase: `2_pruebas_y_despliegue/02_ci_github.md`, plantilla `ejemplos/ci_proyecto_i.yml` y ejercicio `ejercicios/E4_ci_github.md`.
+
+### Requisitos mínimos
+
+1. Fichero **`.github/workflows/ci.yml`** en el repo del Proyecto I.
+2. Triggers: al menos `push` a `main` y `pull_request`.
+3. Steps: checkout → setup Python 3.12 → `pip install -r requirements.txt` → `pytest` con **`--cov-fail-under=60`**.
+4. El workflow debe validar **Parte A y Parte B** (ambos paquetes en `--cov=...` o un comando equivalente).
+5. Evidencia: al menos un run **verde** en la pestaña Actions (enlace o badge en el README).
+
+Sin CI verde, el Proyecto I se considera **incompleto** (aunque pytest pase solo en local).
+
+---
+
 ## Entrega (ambas partes)
 
 En el mismo repositorio GitHub (o carpeta del Proyecto I):
@@ -137,7 +193,8 @@ En el mismo repositorio GitHub (o carpeta del Proyecto I):
 | --- | --- | --- |
 | Código modular + CLI | Obligatorio | Obligatorio |
 | Tests unitarios (pytest) | Obligatorio | Obligatorio |
-| README con cómo ejecutar código y tests | Obligatorio | Obligatorio (puede ser un README conjunto) |
+| CI GitHub Actions | Obligatorio (un workflow para todo el repo) | Obligatorio (cubierto por el mismo workflow) |
+| README con cómo ejecutar código, tests y CI | Obligatorio | Obligatorio (puede ser un README conjunto) |
 | Datos | `ventas.csv` del curso | Muestra + URL de origen |
 | Secretos / claves | No | No |
 
@@ -150,7 +207,9 @@ Checklist mínimo de entrega:
 - [ ] Tests de **loader**, **validator**, **metrics** y **cli** en Parte A
 - [ ] Tests de **loader**, **validator**, **metrics** y **cli** en Parte B
 - [ ] ≥ 1 test `integration`
-- [ ] README con comandos de ambas apps **y** de pytest (incl. coverage)
+- [ ] `.github/workflows/ci.yml` presente
+- [ ] Actions en **verde** (enlace o badge en el README)
+- [ ] README con comandos de ambas apps, pytest/coverage y CI
 - [ ] Origen y licencia del dataset de internet documentados
 - [ ] Historial Git con sentido (no un único commit gigante el último día)
 
@@ -160,11 +219,12 @@ Checklist mínimo de entrega:
 
 | Criterio | Peso | Notas |
 | --- | --- | --- |
-| Correctitud funcional (A + B) | 25 % | Las dos partes deben correr |
-| Diseño OOP / modularidad | 20 % | Separación loader / validator / metrics / CLI |
+| Correctitud funcional (A + B) | 20 % | Las dos partes deben correr |
+| Diseño OOP / modularidad | 15 % | Separación loader / validator / metrics / CLI |
 | Manejo de errores y validación | 15 % | Reglas explícitas en ambos dominios |
 | **Tests (pytest)** | **20 %** | loader+validator+metrics+cli en A y B; ≥ 8 tests; cobertura ≥ 60 %; 1 integration |
-| Claridad, documentación y dataset B | 10 % | README, URL/licencia, cómo lanzar pytest + cov |
-| Uso responsable de Git | 10 % | Commits legibles en ambas partes |
+| **CI (GitHub Actions)** | **15 %** | Workflow + gate coverage + run verde |
+| Claridad, documentación y dataset B | 10 % | README, URL/licencia, pytest + CI |
+| Uso responsable de Git | 5 % | Commits legibles en ambas partes |
 
-Si solo se entrega una de las dos partes, faltan tests de algún módulo (`loader` / `validator` / `metrics` / `cli`), o la cobertura es inferior al **60 %**, la nota del Proyecto I queda **incompleta** (no se considera entregado el proyecto).
+Si solo se entrega una de las dos partes, faltan tests de algún módulo (`loader` / `validator` / `metrics` / `cli`), la cobertura es inferior al **60 %**, o **CI no está verde**, la nota del Proyecto I queda **incompleta** (no se considera entregado el proyecto).
