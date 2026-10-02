@@ -1,0 +1,25 @@
+name: dsia-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Unit tests (tema 2)
+        working-directory: 2_pruebas_y_despliegue/ejemplos
+        run: pytest -q
+      - name: API template tests (tema 5)
+        working-directory: 5_desarrollo_end_to_end/plantilla_proyecto
+        run: pytest -q

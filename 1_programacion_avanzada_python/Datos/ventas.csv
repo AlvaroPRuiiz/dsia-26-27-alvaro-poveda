@@ -1,0 +1,11 @@
+fecha,region,producto,unidades,precio_unitario,cliente_id
+2026-01-05,Norte,Sensor A,12,19.5,C001
+2026-01-05,Sur,Sensor B,4,32.0,C002
+2026-01-06,Norte,Sensor A,7,19.5,C003
+2026-01-07,Este,Gateway,2,120.0,C001
+2026-01-08,Sur,Sensor B,,32.0,C004
+2026-01-09,Oeste,Sensor A,15,19.5,C005
+2026-01-10,Norte,Gateway,1,120.0,C002
+2026-01-10,Este,Sensor B,9,32.0,C006
+2026-01-11,Sur,Sensor A,3,-5.0,C007
+2026-01-12,Norte,Sensor A,8,19.5,C001
