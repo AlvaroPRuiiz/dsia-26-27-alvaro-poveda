@@ -366,30 +366,132 @@ python ejemplos/pipeline_ventas.py \
 
 Solo si el pipeline sale `0` tiene sentido un paso siguiente (copiar a carpeta “publicada”, entrenar un modelo, notificar).
 
-### B4.2 Wrapper mínimo (idea de cron)
+### B4.2 Wrapper para cron
+
+`cron` no “entiende” tu repo: llama a un **script** con paths absolutos, venv y logs.
+
+Guarda p. ej. `scripts/run_pipeline_ventas.sh` (ajusta `REPO` a tu máquina):
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
-cd /ruta/al/repo/3_automatizacion_e_ia
+
+REPO="/Users/TU_USUARIO/icai/dsia-26-27/3_automatizacion_e_ia"
+VENV="/Users/TU_USUARIO/icai/dsia-26-27/.venv"   # o el venv del curso
+DAY="$(date +%F)"
+OUT="${REPO}/Datos/salida/${DAY}"
+LOG_DIR="${REPO}/Datos/salida/cron_logs"
+mkdir -p "${OUT}" "${LOG_DIR}"
+
+# PATH mínimo + activar venv (cron arranca con un entorno muy pobre)
+export PATH="/usr/local/bin:/usr/bin:/bin"
+# shellcheck source=/dev/null
+source "${VENV}/bin/activate"
+
+cd "${REPO}"
 python ejemplos/pipeline_ventas.py \
   --input Datos/ventas.csv \
-  --output-dir "Datos/salida/$(date +%F)" \
-  --max-error-rate 0.1
+  --output-dir "${OUT}" \
+  --max-error-rate 0.1 \
+  >> "${LOG_DIR}/ventas_${DAY}.log" 2>&1
+
+echo "OK ${DAY} exit=0" >> "${LOG_DIR}/ventas_${DAY}.log"
 ```
 
-`set -e` hace que un exit ≠ 0 aborte el script: fail-fast a nivel shell.
+```bash
+chmod +x scripts/run_pipeline_ventas.sh
+# Prueba manual antes de cron:
+./scripts/run_pipeline_ventas.sh
+echo $?
+```
 
-### B4.3 CI como consumidor del job
+`set -e` + exit del pipeline: si el gate falla (`1`) o el input es inválido (`2`), el script aborta y **no** imprime el `OK`.
+
+### B4.3 Crontab: ejemplos concretos
+
+Sintaxis (5 campos + comando):
+
+```text
+┌──────── minuto (0–59)
+│ ┌────── hora (0–23)
+│ │ ┌──── día del mes (1–31)
+│ │ │ ┌── mes (1–12)
+│ │ │ │ ┌ día de la semana (0–7, 0 y 7 = domingo)
+│ │ │ │ │
+* * * * *  comando
+```
+
+Editar la tabla del usuario:
+
+```bash
+crontab -e          # editar
+crontab -l          # listar
+```
+
+Ejemplos (sustituye la ruta del wrapper):
+
+```cron
+# Cada día a las 02:15 — cierre nocturno de ventas
+15 2 * * * /Users/TU_USUARIO/icai/dsia-26-27/3_automatizacion_e_ia/scripts/run_pipeline_ventas.sh
+
+# Cada hora en punto (útil en pruebas; no lo dejes así en “prod” de juguete)
+0 * * * * /Users/TU_USUARIO/icai/dsia-26-27/3_automatizacion_e_ia/scripts/run_pipeline_ventas.sh
+
+# Lunes a viernes a las 07:30 — corrida laborable
+30 7 * * 1-5 /Users/TU_USUARIO/icai/dsia-26-27/3_automatizacion_e_ia/scripts/run_pipeline_ventas.sh
+
+# Domingo a las 03:00 — corrida semanal
+0 3 * * 0 /Users/TU_USUARIO/icai/dsia-26-27/3_automatizacion_e_ia/scripts/run_pipeline_ventas.sh
+```
+
+Variante **sin** script aparte (menos mantenible; solo para entender cron):
+
+```cron
+15 2 * * * cd /Users/TU_USUARIO/icai/dsia-26-27/3_automatizacion_e_ia && /Users/TU_USUARIO/icai/dsia-26-27/.venv/bin/python ejemplos/pipeline_ventas.py --input Datos/ventas.csv --output-dir Datos/salida/$(date +\%F) --max-error-rate 0.1 >> Datos/salida/cron_logs/ventas.log 2>&1
+```
+
+Nota: en crontab, `%` hay que escaparlo como `\%` (cron lo interpreta de forma especial).
+
+### B4.4 Comprobar que cron “disparó”
+
+```bash
+# macOS: logs del sistema (según versión)
+log show --predicate 'process == "cron"' --last 2h | tail
+
+# Linux típico
+grep CRON /var/log/syslog | tail
+# o:
+journalctl -u cron -n 50
+```
+
+Y en el repo:
+
+```bash
+ls Datos/salida/cron_logs/
+tail -n 40 Datos/salida/cron_logs/ventas_$(date +%F).log
+cat Datos/salida/$(date +%F)/metrics.json
+```
+
+### B4.5 Pitfalls típicos de cron (lista corta)
+
+1. **PATH vacío** — usa venv con path absoluto o `source` del `activate`.  
+2. **Rutas relativas** — `cd` al repo o paths absolutos siempre.  
+3. **Sin `chmod +x`** en el `.sh`.  
+4. **Sin redirigir logs** — “no pasó nada” porque stdout de cron se pierde.  
+5. **Probar solo en crontab** — primero ejecuta el wrapper a mano y mira `echo $?`.  
+6. **Máquina dormida** — en un portátil, si está suspendido a las 02:15, esa corrida no corre (en clase basta entenderlo).
+
+### B4.6 CI como consumidor del job
 
 En Tema 2 ya automatizaste **validar código**. Aquí automatizas **procesar datos**. Encajan:
 
 ```text
 push/PR  →  pytest (transform puro, cov)     ← calidad del código
-cron/CI  →  pipeline CLI + leer metrics.json ← calidad del dato / corrida
+cron     →  pipeline CLI + leer metrics/log  ← calidad del dato / corrida
+CI       →  puede smoke-testear el mismo CLI
 ```
 
-No hace falta Airflow en DSIA: CLI + exit codes + tests bastan para el Proyecto II.
+No hace falta Airflow en DSIA: CLI + exit codes + tests + cron bastan para el Proyecto II.
 
 ---
 
@@ -452,7 +554,7 @@ Ejemplo de líneas útiles:
 
 ## B9. Ejemplo guiado: automatizar un “cierre diario”
 
-Escenario: cada noche quieres limpiar ventas y dejar métricas en una carpeta con fecha.
+Escenario: cada noche quieres limpiar ventas y dejar métricas en una carpeta con fecha. El cuerpo del script es el mismo que pondrías detrás de `15 2 * * *` en crontab (véase B4.3).
 
 ```bash
 #!/usr/bin/env bash
@@ -548,6 +650,7 @@ Mantén:
 - [ ] Sé re-ejecutar de forma idempotente  
 - [ ] Sé encadenar con `&&` / interpretar `echo $?`  
 - [ ] Sé leer `run.log` + `metrics.json` como evidencia  
+- [ ] Sé explicar una línea de crontab y por qué el wrapper usa paths absolutos  
 
 ### Ejercicio / proyecto
 
@@ -592,6 +695,12 @@ ls /tmp/idem
 python ejemplos/pipeline_ventas.py \
   --input Datos/ventas.csv --output-dir /tmp/ok --max-error-rate 0.5 \
 && echo "siguiente paso automatizado"
+
+# Cron (tras crear el wrapper)
+./scripts/run_pipeline_ventas.sh
+crontab -l
+# Ejemplo de línea:
+# 15 2 * * * /ruta/absoluta/.../scripts/run_pipeline_ventas.sh
 ```
 
 ```python
@@ -642,6 +751,9 @@ No en DSIA. Domina CLI + exit codes + tests; los orquestadores son el mismo dise
 
 **¿Idempotencia implica borrar siempre la carpeta?**  
 No: sobrescribir paths estables (`ventas_limpias.csv`, `metrics.json`) suele bastar. Lo importante es un resultado predecible tras N ejecuciones.
+
+**¿Obligatorio usar cron en el Proyecto II?**  
+No como requisito rígido. Sí debes dejar el job **cron-ready** (CLI + exit codes + logs). Programarlo en tu máquina es la prueba de fuego de la automatización.
 
 ---
 
