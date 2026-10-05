@@ -72,18 +72,6 @@ python ejemplos/pipeline_ventas.py \
 
 ---
 
-## 2. Guion de exposición (30 min)
-
-| Min | Qué | Dónde |
-| --- | --- | --- |
-| 0–3 | Historia + regla de oro + lanzar demo holgado | §1 + A1 |
-| 3–10 | A1: mismos flags, otro umbral (sin editar `.py`) | A1 |
-| 10–20 | A2: `echo $?`, gate `0.05`, leer metrics/log, `&&` | A2 |
-| 20–27 | A3: re-run idempotente + por qué cron lo exige | A3 |
-| 27–30 | Puente: bash pega los tres conceptos → E4 | B1–B3 |
-
----
-
 # PARTE A — Tres conceptos clave
 
 > Pregunta guía: ***¿puede correr solo?***  
