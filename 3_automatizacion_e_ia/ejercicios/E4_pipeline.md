@@ -61,7 +61,7 @@ Anota en una línea: *qué cambió (flags) y qué no (código)*.
 | `1` | Gate de calidad |
 | `2` | Input inválido (path / columnas) |
 
-### 2.1 Leer evidencia (corrida OK)
+### 2.1 Leer evidencia (ejecución OK)
 
 ```bash
 python ejemplos/pipeline_ventas.py \
