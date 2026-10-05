@@ -27,3 +27,10 @@ build/
 .idea/
 .vscode/
 *.swp
+
+# Reglas adicionales de upstream
+node_modules/
+.serverless/
+*.log
+# Notas y guías privadas del profesor (no publicar)
+sesiones/
