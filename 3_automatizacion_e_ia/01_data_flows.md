@@ -1,4 +1,4 @@
-# Sesión 5 oct 2026 — Flujos de datos (data flows)
+# Sesión 5 oct 2026 — Flujos de datos (automatizar el pipeline)
 
 | Recurso | Fichero |
 | --- | --- |
@@ -7,7 +7,7 @@
 | Datos | [`Datos/ventas.csv`](Datos/ventas.csv) |
 | Base previa (arquitectura) | [`../1_programacion_avanzada_python/03_arquitectura_patrones.md`](../1_programacion_avanzada_python/03_arquitectura_patrones.md) |
 
-Este documento es la **referencia amplia** de data flows en DSIA: por qué un pipeline no es un notebook, los **tres conceptos clave** que debes dominar al salir de clase, y material suplementario (propiedades de automatización, parametrización CLI, composición con shell/CI, exit codes, anti-patrones, puente al Proyecto II) para automatizar con criterio.
+Este documento es la **referencia amplia** de automatización de data flows en DSIA: qué hace que un pipeline sea un **job** (no un notebook), los **tres conceptos clave** de automatización que debes dominar al salir de clase, y material suplementario (etapas del flow, I/O vs puro, cron, CI, anti-patrones, puente al Proyecto II).
 
 ---
 
@@ -17,16 +17,16 @@ Este documento es la **referencia amplia** de data flows en DSIA: por qué un pi
 
 Al terminar la sesión **debes** ser capaz de:
 
-1. Describir un **data flow** por etapas: ingesta → validación/transformación → persistencia → observabilidad.
-2. Separar **I/O** (load/save) de la **lógica pura** (`transform`) testeable sin disco.
-3. Aplicar un **gate de calidad** (`max-error-rate` + logs + `metrics.json` + exit codes).
+1. Lanzar el flujo como **job parametrizado por CLI** (sin notebook, sin inputs interactivos).
+2. Exponer **señales para máquinas**: exit codes + `metrics.json` + logs (para shell, cron y CI).
+3. Dejar el job **seguro de re-ejecutar**: idempotencia + gate de calidad (fail-fast).
 
 ### Deseables (material suplementario)
 
-4. Nombrar y ejemplificar: reproducibilidad, idempotencia, observabilidad, fail-fast, parametrización.
-5. Encadenar el job con shell (`&&`, `echo $?`) y entenderlo como pieza de CI/cron.
-6. Extender el demo (E4): contrato, log a fichero, re-ejecución idempotente, test de `transform`.
-7. Enlazar el pipeline con el dominio del **Proyecto II**.
+4. Describir el flow por etapas (ingesta → transform → persistencia → observabilidad).
+5. Separar I/O de `transform` y testear el núcleo en memoria.
+6. Programar el job con **cron** (wrapper + crontab) y/o encadenarlo con `&&`.
+7. Extender el demo (E4) y enlazarlo al **Proyecto II**.
 
 ---
 
@@ -34,59 +34,230 @@ Al terminar la sesión **debes** ser capaz de:
 
 ### 1.1 Qué entregamos
 
-En DSIA no entregamos “un notebook que limpia ventas si pulso Run All”. Entregamos un **job** que otra persona (o CI/cron) pueda lanzar:
+En DSIA no entregamos “un notebook que limpia ventas si pulso Run All”. Entregamos un **job automatizable** que otra persona (o cron/CI) pueda lanzar:
 
 ```bash
 python ejemplos/pipeline_ventas.py --input Datos/ventas.csv --output-dir Datos/salida
 ```
 
-y obtener artefactos + evidencia de calidad.
+y obtener artefactos + evidencia de calidad **sin que nadie esté delante**.
 
 ### 1.2 Mapa mental del semestre
 
 ```text
 Tema 1  →  pandas + arquitectura (etapas y módulos)
-Tema 2  →  pytest + CI (confianza)
-Tema 3  →  data flows (hoy) + APIs IA     ← automatizas el núcleo
-Tema 5  →  E2E / deploy                    ← el mismo flujo crece
+Tema 2  →  pytest + CI (confianza en el código)
+Tema 3  →  automatizar el flujo de datos (hoy) + APIs IA
+Tema 5  →  E2E / deploy                    ← el mismo job crece
 ```
 
-El Proyecto II **parte** de un pipeline como este (datos → limpieza → métricas → más adelante IA + tests).
+Automatizar = el trabajo ocurre **sin ti**: mismos comandos, señales claras, re-ejecución segura.
 
 ### 1.3 Analogías útiles
 
 | Concepto | Analogía |
 | --- | --- |
-| Data flow / pipeline | Cadena de montaje con controles de calidad |
-| Job automatizable | Turno de fábrica que arranca solo (cron/CI), no “cuando me acuerdo” |
-| Ingesta (`load`) | Recepción de materia prima |
-| `transform` puro | Máquina que procesa sin salir de la nave |
-| Persistencia (`save`) | Almacén de producto terminado |
-| `metrics.json` | Parte de producción del turno |
-| `run.log` | Cámara / libro de incidencias |
-| `max-error-rate` | “Si hay >X % defectuoso, paramos la línea” |
-| Exit code ≠ 0 | Alarma roja para CI o el operador |
+| Job automatizable | Turno de fábrica que arranca solo (cron/CI) |
+| CLI parametrizada | Misma máquina, distinta materia prima / umbral |
+| Exit code | Semáforo para el siguiente robot de la línea |
+| `metrics.json` / `run.log` | Parte de producción + libro de incidencias |
 | Idempotencia | Pulsar “guardar” dos veces no crea dos facturas |
-| Parametrización CLI | Misma máquina, distinta materia prima / umbral |
-| Composición (`&&`) | Solo pasa a la siguiente estación si la anterior OK |
+| Gate / fail-fast | Si hay >X % defectuoso, paramos y no publicamos |
+| Data flow (etapas) | Cadena de montaje (arquitectura; ver Parte B) |
+| `transform` puro | Máquina interna testeable sin salir de la nave |
 
 ### 1.4 Regla de oro
 
-> **I/O en los bordes; reglas de negocio en el centro; si la calidad no llega, no publiques; el job debe poder lanzarlo una máquina sin ti delante.**
+> **Si una máquina no puede lanzarlo, leer el resultado y re-ejecutarlo sin miedo, aún no está automatizado.**
 
 ---
 
 # PARTE A — Tres conceptos clave (obligatorio)
 
-> Prioridad de clase: A1 → A2 → A3. El resto es profundidad.
+> Prioridad de clase: A1 → A2 → A3.  
+> Las **etapas** del pipeline y la separación I/O/`transform` importan, pero son la **arquitectura que habilita** la automatización (Parte B). Hoy el foco es: *¿puede correr solo?*
 
 ---
 
-## A1. Concepto clave 1 — Etapas de un data flow
+## A1. Concepto clave 1 — Job parametrizado (CLI, no notebook)
 
 ### Qué es
 
-Un **data flow de producto** no es un notebook lineal: es un job **reproducible, observable y con contratos**.
+Un flujo está automatizado solo si existe un **entrypoint** que:
+
+1. se lanza con un comando,
+2. recibe **parámetros** (input, output, umbrales),
+3. no pide `input()` ni “ejecuta la celda 4”,
+4. escribe artefactos en rutas conocidas.
+
+```text
+Humano / cron / CI
+        │
+        ▼
+python pipeline_ventas.py --input … --output-dir … --max-error-rate …
+        │
+        ▼
+artefactos + señales (A2)
+```
+
+### Demo mínima
+
+```bash
+cd 3_automatizacion_e_ia
+python ejemplos/pipeline_ventas.py \
+  --input Datos/ventas.csv \
+  --output-dir Datos/salida \
+  --max-error-rate 0.5
+```
+
+Misma lógica, otra política (sin tocar código):
+
+```bash
+python ejemplos/pipeline_ventas.py \
+  --input Datos/ventas.csv \
+  --output-dir /tmp/prod \
+  --max-error-rate 0.05
+```
+
+### Por qué es *el* concepto #1 de automatización
+
+Sin CLI estable, no hay cron, no hay CI de datos, no hay compañero que reproduzca tu corrida. El notebook explora; el **job** opera.
+
+### Checklist del concepto 1
+
+- [ ] Sé lanzar el demo solo con flags
+- [ ] Sé cambiar input / output / umbral sin editar el `.py`
+- [ ] Sé explicar por qué un “Run All” no es automatización
+
+---
+
+## A2. Concepto clave 2 — Señales para máquinas (exit + metrics + logs)
+
+### Qué es
+
+Quien automatiza (shell, cron, Actions) no mira la pantalla: lee **señales**.
+
+| Señal | Para qué sirve |
+| --- | --- |
+| Exit code `0` / `1` / `2` | ¿Sigo? ¿Alarma de datos? ¿Alarma de config? |
+| `metrics.json` | Evidencia numérica de la corrida |
+| `run.log` (y/o stdout redirigido) | Diagnóstico cuando nadie estaba delante |
+
+En el demo:
+
+```python
+if report["error_rate"] > args.max_error_rate:
+    logger.error("... abortando")
+    return 1
+# ...
+return 0
+```
+
+| Código | Significado | Quién reacciona |
+| --- | --- | --- |
+| `0` | OK: artefactos escritos | Encadena el siguiente paso |
+| `1` | Gate de calidad | Alerta de datos; no “publiques” |
+| `2` | Input inválido (path/columnas) | Alerta de configuración |
+
+### Práctica en aula
+
+```bash
+python ejemplos/pipeline_ventas.py \
+  --input Datos/ventas.csv \
+  --output-dir /tmp/out \
+  --max-error-rate 0.05
+echo $?   # 1  →  el CSV del curso (~0.067) no pasa el umbral
+
+# Happy path + leer evidencia
+python ejemplos/pipeline_ventas.py \
+  --input Datos/ventas.csv \
+  --output-dir /tmp/ok \
+  --max-error-rate 0.5
+cat /tmp/ok/metrics.json
+tail -n 20 /tmp/ok/run.log
+```
+
+Composición (la señal gobierna el siguiente paso):
+
+```bash
+python ejemplos/pipeline_ventas.py \
+  --input Datos/ventas.csv --output-dir /tmp/ok --max-error-rate 0.5 \
+&& echo "OK: siguiente paso automatizado" \
+|| echo "KO: no publiques"
+```
+
+### Checklist del concepto 2
+
+- [ ] Sé interpretar `echo $?` tras el pipeline
+- [ ] Sé distinguir exit `1` (datos) vs `2` (config/input)
+- [ ] Sé apuntar a `metrics.json` y al log como evidencia de una corrida “a solas”
+
+---
+
+## A3. Concepto clave 3 — Seguro de re-ejecutar (idempotencia + gate)
+
+### Qué es
+
+Automatizar implica **volver a lanzar** (cron diario, reintento, CI). Dos propiedades:
+
+1. **Idempotencia** — N ejecuciones al mismo destino → resultado predecible (sobrescribe; no duplica basura).  
+2. **Gate / fail-fast** — si la calidad no llega, **no publiques** (no escribas el CSV “limpio” o no encadenes el siguiente paso).
+
+```bash
+# Idempotencia: mismo output-dir dos veces
+python ejemplos/pipeline_ventas.py --input Datos/ventas.csv --output-dir /tmp/idem --max-error-rate 0.5
+python ejemplos/pipeline_ventas.py --input Datos/ventas.csv --output-dir /tmp/idem --max-error-rate 0.5
+ls /tmp/idem
+# Esperado: ventas_limpias.csv, metrics.json, run.log  (una vez cada uno)
+```
+
+```bash
+# Gate: no “aprobar” una corrida mala
+python ejemplos/pipeline_ventas.py \
+  --input Datos/ventas.csv --output-dir /tmp/gate --max-error-rate 0.05
+echo $?   # 1 — aborta antes de tratarla como éxito
+```
+
+**Checkpoint del CSV del curso:** ~**140 válidas / 10 inválidas** → `error_rate ≈ 0.067`.
+
+### Por qué importa
+
+Un cron que cada noche **añade** otro `ventas_limpias (3).csv` o publica basura con exit `0` no es automatización: es deuda operativa.
+
+### Checklist del concepto 3
+
+- [ ] Sé re-ejecutar sobre el mismo `output-dir` sin duplicar artefactos
+- [ ] Sé forzar un rojo con `--max-error-rate 0.05` y explicar el fail-fast
+- [ ] Sé decir por qué cron exige idempotencia + señales claras (A2)
+
+---
+
+## A4. Mapa mental de los 3 conceptos
+
+```text
+CLI parametrizada     →  una máquina puede lanzarlo
+Exit + metrics + logs →  una máquina puede decidir / diagnosticar
+Idempotencia + gate   →  una máquina puede re-lanzarlo sin miedo
+```
+
+Arquitectura (Parte B): etapas del flow + `transform` puro hacen que ese job sea mantenible y testeable — pero **no sustituyen** a A1–A3.
+
+**Siguiente paso inmediato en clase:** [`ejercicios/E4_pipeline.md`](ejercicios/E4_pipeline.md).
+
+---
+
+# PARTE B — Material suplementario
+
+> Úsalo para profundizar y para el Proyecto II. **No** sustituye a A1–A3.  
+> Aquí entran la **arquitectura del flow** (etapas, I/O vs puro) y el detalle de cron/CI.
+
+---
+
+## B0. Arquitectura que habilita la automatización
+
+Los conceptos clave hablan de *lanzar / señalar / re-lanzar*. Para que eso sea mantenible hace falta un flow por etapas y un núcleo testeable.
+
+### Etapas
 
 ```text
 Ingesta → Validación → Transformación → Persistencia → Observabilidad
@@ -100,136 +271,25 @@ Ingesta → Validación → Transformación → Persistencia → Observabilidad
 | Persistencia | Escribir salidas | `save()` |
 | Observabilidad | Logs + métricas + códigos de salida | `setup_logging`, `report`, `main` return |
 
-### Demo mínima
-
-```bash
-cd 3_automatizacion_e_ia
-python ejemplos/pipeline_ventas.py \
-  --input Datos/ventas.csv \
-  --output-dir Datos/salida \
-  --max-error-rate 0.5
-```
-
-Inspecciona:
-
-- `Datos/salida/ventas_limpias.csv`
-- `Datos/salida/metrics.json`
-- `Datos/salida/run.log` (si el ejercicio lo exige / tras E4)
-
-### Checklist del concepto 1
-
-- [ ] Sé dibujar las 5 etapas en una frase cada una
-- [ ] Sé lanzar el demo y apuntar a sus artefactos
-- [ ] Sé explicar por qué esto no es un notebook de exploración
-
----
-
-## A2. Concepto clave 2 — Separar I/O de lógica pura
-
-### Qué es
+### I/O vs lógica pura
 
 | Capa | Puede tocar disco/red | Debe ser fácil de testear |
 | --- | --- | --- |
 | `load` / `save` | Sí | Con `tmp_path` o mocks |
 | `transform(df) -> (clean, report)` | **No** (idealmente) | Con DataFrame en memoria |
 
-Firma del demo:
-
-```python
-def transform(frame: pd.DataFrame, logger=None) -> tuple[pd.DataFrame, dict]:
-    ...
-```
-
-### Por qué importa
-
-- Unitario rápido: sin CSV, sin permisos, sin cwd frágil.
-- Puedes cambiar CSV → JSON → API **sin** reescribir las reglas.
-- Encaja con SOLID/Repository de la sesión de arquitectura.
-
-### Test mínimo (idea)
-
 ```python
 def test_transform_report_counts():
     df = pd.DataFrame({
         "unidades": [1, None, 2],
         "precio_unitario": [10.0, 5.0, -1.0],
-        # ... resto de columnas si hace falta
     })
     clean, report = transform(df)
     assert report["rows_in"] == 3
     assert report["rows_dropped"] >= 1
 ```
 
-### Checklist del concepto 2
-
-- [ ] Sé señalar qué funciones son borde vs centro en el demo
-- [ ] Sé decir por qué `transform` no debería hacer `to_csv` por dentro
-- [ ] Sé esbozar un test sin tocar `Datos/`
-
----
-
-## A3. Concepto clave 3 — Gate de calidad (fail-fast + observabilidad)
-
-### Qué es
-
-Antes de **publicar** (guardar limpio), decides si la corrida es aceptable.
-
-En el demo:
-
-```python
-if report["error_rate"] > args.max_error_rate:
-    logger.error("... abortando")
-    return 1  # fallo controlado
-```
-
-| Señal | Significado |
-| --- | --- |
-| Exit `0` | OK: artefactos escritos |
-| Exit `1` | Calidad insuficiente (umbral) |
-| Exit `2` | Input inválido (path / columnas) — tras E4 |
-
-### Práctica en aula
-
-```bash
-# Debe fallar con el CSV del curso (10/150 ≈ 0.067 > 0.05)
-python ejemplos/pipeline_ventas.py \
-  --input Datos/ventas.csv \
-  --output-dir /tmp/out \
-  --max-error-rate 0.05
-echo $?   # 1
-```
-
-Con umbral holgado (`0.5`) → exit `0` y `metrics.json` con `error_rate`.
-
-### Observabilidad mínima
-
-1. **Log** — qué pasó (info/error).  
-2. **Métricas** — conteos (`rows_in`, `rows_out`, `rows_dropped`, `error_rate`, …).  
-3. **Exit code** — para humanos, scripts y CI.
-
-### Checklist del concepto 3
-
-- [ ] Sé calcular mentalmente `error_rate = dropped / rows_in`
-- [ ] Sé forzar un rojo con `--max-error-rate 0.05`
-- [ ] Sé leer `metrics.json` y relacionarlo con el abort
-
----
-
-## A4. Mapa mental de los 3 conceptos
-
-```text
-Etapas del flow     →  qué hace el job, en orden
-I/O vs transform    →  qué se testea barato
-Gate de calidad     →  cuándo está permitido publicar
-```
-
-**Siguiente paso inmediato en clase:** [`ejercicios/E4_pipeline.md`](ejercicios/E4_pipeline.md).
-
----
-
-# PARTE B — Material suplementario
-
-> Úsalo para profundizar y para el Proyecto II. **No** sustituye a A1–A3.
+Sin esta separación, puedes “automatizar” un monolito frágil: corre solo, pero no lo puedes testear ni cambiar el origen de datos sin miedo.
 
 ---
 
@@ -514,10 +574,11 @@ No hace falta Airflow en DSIA: CLI + exit codes + tests + cron bastan para el Pr
 
 ## B6. Guion de exposición (30 min)
 
-1. Mensaje: notebook ≠ job automatizable (5 min).  
-2. Dibujar etapas A1 + lanzar demo OK + mirar artefactos (8 min).  
-3. Señalar `transform` puro vs `load`/`save` (5 min).  
-4. Forzar umbral `0.05`, leer exit code + metrics; mostrar re-run idempotente (12 min).
+1. Mensaje: automatizar = CLI + señales + re-ejecución segura (5 min).  
+2. A1: lanzar demo con flags; cambiar umbral sin tocar código (7 min).  
+3. A2: forzar exit `1` con `0.05`; leer `metrics.json` / log; mostrar `&&` (10 min).  
+4. A3: re-run idempotente + adelanto cron (B4) (8 min).  
+5. (Si sobra) B0: etapas + `transform` puro como arquitectura de soporte.
 
 ---
 
@@ -622,35 +683,34 @@ Mantén:
 
 ### Clave
 
-1. ¿Cuáles son las etapas de un data flow en DSIA?  
-2. ¿Por qué `transform` no debería hacer I/O?  
-3. ¿Qué hace `--max-error-rate 0.05` con el CSV del curso?  
-4. ¿Qué hay en `metrics.json`?
+1. ¿Qué hace que un pipeline sea un *job* automatizable (y no un notebook)?  
+2. ¿Qué señales lee una máquina tras la corrida? ¿Exit `1` vs `2`?  
+3. ¿Por qué cron exige idempotencia?  
+4. ¿Qué hace `--max-error-rate 0.05` con el CSV del curso?
 
 ### Suplementario
 
-5. ¿Reproducibilidad vs idempotencia (con un ejemplo cada una)?  
-6. ¿Exit 1 vs exit 2?  
+5. ¿Cuáles son las etapas del data flow?  
+6. ¿Por qué `transform` no debería hacer I/O?  
 7. ¿Cómo encadenas el pipeline en bash para que no “publique” si falla?  
-8. ¿Dónde encaja este pipeline en el Proyecto II?
+8. ¿Qué pone una línea de crontab y por qué el wrapper usa paths absolutos?
 
 ---
 
 ## B13. Checklist de salida
 
-### Conceptos clave
+### Conceptos clave (automatización)
 
-- [ ] Sé explicar el diagrama de etapas  
-- [ ] Sé separar load/transform/save en el demo  
-- [ ] Sé abortar por umbral y leer el exit code  
+- [ ] Sé lanzar el job solo con CLI / flags  
+- [ ] Sé interpretar exit codes y leer `metrics.json` + log  
+- [ ] Sé re-ejecutar de forma idempotente y abortar por umbral  
 
-### Automatización
+### Arquitectura / profundidad
 
-- [ ] Sé parametrizar input / output / umbral por CLI  
-- [ ] Sé re-ejecutar de forma idempotente  
-- [ ] Sé encadenar con `&&` / interpretar `echo $?`  
-- [ ] Sé leer `run.log` + `metrics.json` como evidencia  
-- [ ] Sé explicar una línea de crontab y por qué el wrapper usa paths absolutos  
+- [ ] Sé dibujar las etapas del flow  
+- [ ] Sé separar load/transform/save y testear `transform`  
+- [ ] Sé explicar una línea de crontab + wrapper con paths absolutos  
+- [ ] Sé encadenar con `&&`  
 
 ### Ejercicio / proyecto
 
@@ -761,10 +821,10 @@ No como requisito rígido. Sí debes dejar el job **cron-ready** (CLI + exit cod
 
 | Criterio | Insuficiente | Adecuado | Sólido |
 | --- | --- | --- | --- |
-| Etapas | Todo mezclado | load/transform/save visibles | + contrato de columnas |
-| Testabilidad | Solo CLI manual | Test de `transform` | + tmp_path en load/save |
-| Calidad | Siempre escribe | Umbral + exit code | Log fichero + metrics ricos |
-| Automatización | Paths fijos / notebook | CLI parametrizada | + idempotencia + composición `&&`/CI |
+| Job CLI | Notebook / paths fijos | Flags input/output/umbral | Listo para cron (wrapper + logs) |
+| Señales | Solo print en pantalla | Exit codes + metrics | + log fichero + composición `&&` |
+| Re-ejecución | Duplica artefactos / siempre exit 0 | Idempotente + gate | Cron diario verificable |
+| Arquitectura | Todo mezclado | load/transform/save visibles | + test de `transform` |
 | Proyecto II | Empieza de cero | Reutiliza el esqueleto | Listo para IA/sklearn en bordes |
 
 ---
@@ -773,10 +833,8 @@ No como requisito rígido. Sí debes dejar el job **cron-ready** (CLI + exit cod
 
 Si dominas la **Parte A**, tienes lo esencial de la sesión:
 
-> **Pipeline por etapas + lógica pura testeable + gate de calidad con métricas y exit codes.**
+> **CLI parametrizada + señales (exit/metrics/logs) + re-ejecución segura (idempotencia + gate) = flujo automatizable.**
 
-Si además manejas la **automatización** de la Parte B (parametrización, idempotencia, composición):
-
-> **El mismo job lo puede lanzar una persona, un cron o CI — y sabrás si publicar o no.**
+La Parte B (etapas, `transform` puro, cron) es lo que hace ese job **mantenible y operable** en el tiempo.
 
 **Siguiente paso inmediato:** haz [`ejercicios/E4_pipeline.md`](ejercicios/E4_pipeline.md) y conecta el mismo patrón a tu repo del Proyecto II.
