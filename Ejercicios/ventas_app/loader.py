@@ -12,3 +12,4 @@ def load(path: Path) -> pd.DataFrame:
         raise DataLoadError(f"No existe el fichero: {path}")
 
     return pd.read_csv(path)
+
