@@ -25,7 +25,7 @@ Al terminar la sesión **debes** ser capaz de:
 
 4. Describir el flow por etapas (ingesta → transform → persistencia → observabilidad).
 5. Separar I/O de `transform` y testear el núcleo en memoria.
-6. Programar el job con **cron** (wrapper + crontab) y/o encadenarlo con `&&`.
+6. Programar el job con **cron** y/o **encadenar scripts** (`&&`, orquestador, contratos de paths).
 7. Extender el demo (E4) y enlazarlo al **Proyecto II**.
 
 ---
@@ -121,7 +121,7 @@ python ejemplos/pipeline_ventas.py \
 
 ### Por qué es *el* concepto #1 de automatización
 
-Sin CLI estable, no hay cron, no hay CI de datos, no hay compañero que reproduzca tu corrida. El notebook explora; el **job** opera.
+Sin CLI estable, no hay cron, no hay CI de datos, no hay compañero que reproduzca tu pipeline. El notebook explora; el **job** opera.
 
 ### Checklist del concepto 1
 
@@ -411,20 +411,178 @@ Sin flags, cada cambio de umbral sería un commit o un `input()` manual: eso **n
 
 ## B4. Componer automatizaciones (shell, cron, CI)
 
-El exit code es el enchufe hacia el resto del mundo.
+El exit code es el enchufe hacia el resto del mundo. Automatizar de verdad suele ser **encadenar varios scripts/jobs**, no solo lanzar uno.
 
-### B4.1 Encadenar con `&&`
+### B4.1 Encadenación de scripts
 
-```bash
-python ejemplos/pipeline_ventas.py \
-  --input Datos/ventas.csv \
-  --output-dir Datos/salida \
-  --max-error-rate 0.5 \
-&& echo "OK: publicar / siguiente paso" \
-|| echo "KO: no publiques ni avises en verde"
+#### Idea
+
+```text
+script A (limpiar) ──exit 0──► script B (publicar / validar metrics)
+        │                              │
+        └──exit ≠ 0──► STOP (no B)     └──exit 0──► script C (avisar / train)
 ```
 
-Solo si el pipeline sale `0` tiene sentido un paso siguiente (copiar a carpeta “publicada”, entrenar un modelo, notificar).
+Cada eslabón:
+
+1. es un **CLI** con flags,
+2. escribe artefactos en rutas conocidas,
+3. devuelve exit code útil,
+4. el siguiente **solo** corre si el anterior fue `0`.
+
+#### Operadores que debes dominar
+
+| Forma | Comportamiento |
+| --- | --- |
+| `cmd1 && cmd2` | `cmd2` solo si `cmd1` salió `0` |
+| `cmd1 \|\| cmd2` | `cmd2` solo si `cmd1` **falló** |
+| `cmd1 ; cmd2` | `cmd2` **siempre** (peligroso en pipelines) |
+| `set -euo pipefail` | el script bash aborta al primer comando ≠ 0 |
+
+Regla: en un orquestador de datos preferimos `&&` o `set -e`, casi nunca `;` entre pasos críticos.
+
+#### Ejemplo mínimo (2 pasos)
+
+```bash
+IN=Datos/ventas.csv
+OUT=/tmp/cadena_demo
+PUB=/tmp/cadena_demo/publicado
+
+python ejemplos/pipeline_ventas.py \
+  --input "$IN" \
+  --output-dir "$OUT" \
+  --max-error-rate 0.5 \
+&& mkdir -p "$PUB" \
+&& cp "$OUT/ventas_limpias.csv" "$PUB/" \
+&& cp "$OUT/metrics.json" "$PUB/" \
+&& echo "Publicado en $PUB"
+```
+
+Si el gate falla (`exit 1`), **no** se copia nada a `publicado/`.
+
+#### Orquestador multi-script (patrón DSIA)
+
+Imagina tres piezas (en el Proyecto II las tendrás de verdad; aquí B y C son stubs didácticos):
+
+| Paso | Script | Entrada | Salida |
+| --- | --- | --- | --- |
+| 1 | `pipeline_ventas.py` | CSV crudo | `ventas_limpias.csv` + `metrics.json` |
+| 2 | `check_metrics.py` | `metrics.json` | exit `0/1` según reglas |
+| 3 | `notify_ok.sh` | — | mensaje / fichero de “listo” |
+
+Stub de comprobación (guárdalo p. ej. como `ejemplos/check_metrics.py` en tu práctica):
+
+```python
+#!/usr/bin/env python3
+"""Falla si error_rate o rows_out no cumplen umbrales."""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+def main() -> int:
+    p = argparse.ArgumentParser()
+    p.add_argument("--metrics", type=Path, required=True)
+    p.add_argument("--max-error-rate", type=float, default=0.1)
+    p.add_argument("--min-rows-out", type=int, default=1)
+    args = p.parse_args()
+
+    report = json.loads(args.metrics.read_text(encoding="utf-8"))
+    if report["error_rate"] > args.max_error_rate:
+        print(f"KO error_rate={report['error_rate']}", file=sys.stderr)
+        return 1
+    if report["rows_out"] < args.min_rows_out:
+        print(f"KO rows_out={report['rows_out']}", file=sys.stderr)
+        return 1
+    print(f"OK metrics {report}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+Stub de notificación:
+
+```bash
+#!/usr/bin/env bash
+# ejemplos/notify_ok.sh
+set -euo pipefail
+stamp="${1:-$(date -Iseconds)}"
+echo "PIPELINE_OK ${stamp}" | tee "Datos/salida/LAST_OK.txt"
+```
+
+Orquestador que los encadena (`scripts/run_cadena_ventas.sh`):
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO"
+DAY="$(date +%F)"
+OUT="Datos/salida/${DAY}"
+mkdir -p "$OUT"
+
+echo "== 1/3 limpiar =="
+python ejemplos/pipeline_ventas.py \
+  --input Datos/ventas.csv \
+  --output-dir "$OUT" \
+  --max-error-rate 0.5
+
+echo "== 2/3 validar metrics =="
+python ejemplos/check_metrics.py \
+  --metrics "$OUT/metrics.json" \
+  --max-error-rate 0.1 \
+  --min-rows-out 100
+
+echo "== 3/3 notificar =="
+bash ejemplos/notify_ok.sh "$DAY"
+
+echo "Cadena completa OK → $OUT"
+```
+
+```bash
+chmod +x scripts/run_cadena_ventas.sh ejemplos/notify_ok.sh
+./scripts/run_cadena_ventas.sh
+echo "exit=$?"
+```
+
+Con `set -e`, si el paso 1 o 2 falla, **no** se ejecuta el 3: no hay falso “PIPELINE_OK”.
+
+#### Variante explícita con `&&` (sin `set -e`)
+
+```bash
+OUT=/tmp/cadena
+python ejemplos/pipeline_ventas.py --input Datos/ventas.csv --output-dir "$OUT" --max-error-rate 0.5 \
+&& python ejemplos/check_metrics.py --metrics "$OUT/metrics.json" --max-error-rate 0.1 --min-rows-out 100 \
+&& bash ejemplos/notify_ok.sh \
+|| { echo "Cadena abortada en algún eslabón"; exit 1; }
+```
+
+#### Contratos entre scripts (imprescindible)
+
+Al encadenar, acuerda **paths y formatos**, no “lo que salió por pantalla”:
+
+| Contrato | Ejemplo |
+| --- | --- |
+| Path de entrada del paso N+1 | `$OUT/ventas_limpias.csv` |
+| Path de métricas | `$OUT/metrics.json` |
+| Campos JSON esperados | `error_rate`, `rows_out`, … |
+| Exit codes | mismos significados en todos los CLIs |
+
+Sin contrato, la cadena se rompe en silencio o con rutas inventadas.
+
+#### Anti-patrones al encadenar
+
+1. `paso1 ; paso2` — el 2 corre aunque el 1 haya fallado.  
+2. Ignorar `$?` y mirar solo el log a ojo.  
+3. Paso 2 que relee el CSV crudo en vez del artefacto del paso 1.  
+4. Un único script gigante “que lo hace todo” sin bordes reutilizables.  
+5. Notificar éxito **antes** de comprobar metrics.
 
 ### B4.2 Wrapper para cron
 
@@ -692,8 +850,9 @@ Mantén:
 
 5. ¿Cuáles son las etapas del data flow?  
 6. ¿Por qué `transform` no debería hacer I/O?  
-7. ¿Cómo encadenas el pipeline en bash para que no “publique” si falla?  
-8. ¿Qué pone una línea de crontab y por qué el wrapper usa paths absolutos?
+7. ¿Cómo encadenas **varios scripts** para que el 3.º no corra si falló el 1.º?  
+8. ¿Qué contrato (paths/JSON/exit) pasas entre eslabones?  
+9. ¿Qué pone una línea de crontab y por qué el wrapper usa paths absolutos?
 
 ---
 
@@ -709,8 +868,8 @@ Mantén:
 
 - [ ] Sé dibujar las etapas del flow  
 - [ ] Sé separar load/transform/save y testear `transform`  
+- [ ] Sé encadenar scripts con `&&` / `set -e` y contratos de paths  
 - [ ] Sé explicar una línea de crontab + wrapper con paths absolutos  
-- [ ] Sé encadenar con `&&`  
 
 ### Ejercicio / proyecto
 
@@ -751,10 +910,14 @@ python ejemplos/pipeline_ventas.py --input Datos/ventas.csv --output-dir /tmp/id
 python ejemplos/pipeline_ventas.py --input Datos/ventas.csv --output-dir /tmp/idem --max-error-rate 0.5
 ls /tmp/idem
 
-# Composición
+# Composición / encadenación
 python ejemplos/pipeline_ventas.py \
   --input Datos/ventas.csv --output-dir /tmp/ok --max-error-rate 0.5 \
 && echo "siguiente paso automatizado"
+
+# Cadena multi-script (tras crear stubs + orquestador; ver B4.1)
+./scripts/run_cadena_ventas.sh
+echo $?
 
 # Cron (tras crear el wrapper)
 ./scripts/run_pipeline_ventas.sh
