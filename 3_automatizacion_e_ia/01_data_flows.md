@@ -379,21 +379,111 @@ echo "Cadena OK → $OUT"
 
 ## B5 — Cron (programar el job)
 
-Cron no entiende tu repo: llama a un **wrapper** con paths absolutos, venv y logs.
+### Qué es (en una frase)
+
+**Cron** es un servicio del sistema que, a horas fijas, ejecuta un comando **sin que tú estés delante**.  
+La lista de “cuándo → qué” se llama **crontab**.
+
+```text
+reloj del SO
+    │
+    ▼
+cron lee tu crontab  →  a las 02:15 lanza el comando  →  tu wrapper .sh  →  pipeline Python
+                                                              │
+                                                              └─ escribe metrics + log
+```
+
+Encaja con la Parte A:
+
+| Concepto | Por qué cron lo necesita |
+| --- | --- |
+| A1 CLI | Cron solo sabe lanzar un comando |
+| A2 señales | Si falla, el exit ≠ 0 y el log lo cuentan (nadie mira la pantalla) |
+| A3 idem + gate | Cada noche se re-lanza: no debe duplicar basura ni “aprobar” datos malos |
+
+### Qué **no** es cron
+
+| Cron | No confundir con |
+| --- | --- |
+| Programa **cuándo** corre el job | El job en sí (eso es tu CLI Python) |
+| Una línea “hora + comando” | Un orquestador complejo (Airflow, etc.) |
+| Corre en **esa** máquina | CI de GitHub (otra máquina, otro disparador: push/PR) |
+
+En DSIA: **CI** comprueba el código; **cron** (o un schedule) ejecuta la **corrida de datos**.
+
+### Anatomía de una línea de crontab
+
+```text
+┌──────── minuto (0–59)
+│ ┌────── hora (0–23)
+│ │ ┌──── día del mes (1–31)
+│ │ │ ┌── mes (1–12)
+│ │ │ │ ┌ día semana (0–7; 0 y 7 = domingo)
+│ │ │ │ │
+* * * * *   comando_a_ejecutar
+```
+
+| Campo | `*` significa | Ejemplo |
+| --- | --- | --- |
+| minuto | cada minuto | `15` → en el minuto 15 |
+| hora | cada hora | `2` → a las 02:xx |
+| día mes | cada día | `*` → todos |
+| mes | cada mes | `*` → todos |
+| weekday | cada día | `1-5` → lunes a viernes |
+
+Ejemplos leídos en voz alta:
+
+```cron
+15 2 * * *     /ruta/run_pipeline_ventas.sh
+# “Cada día, a las 02:15, lanza ese script”
+
+30 7 * * 1-5   /ruta/run_pipeline_ventas.sh
+# “De lunes a viernes, a las 07:30”
+
+0 */6 * * *    /ruta/run_pipeline_ventas.sh
+# “Cada 6 horas, en el minuto 0”
+```
+
+Comandos útiles:
+
+```bash
+crontab -e    # editar tu tabla (abre un editor)
+crontab -l    # listar lo que tienes programado
+```
+
+### Por qué hace falta un **wrapper** `.sh`
+
+Cron **no** es tu terminal interactiva:
+
+| En tu terminal | Cuando lo lanza cron |
+| --- | --- |
+| Ya hiciste `cd` al repo | Arranca sin cwd conocido |
+| El venv puede estar activo | Casi seguro **no** está activo |
+| Ves stdout en pantalla | Si no rediriges, el output se pierde |
+| `python` está en el PATH | El PATH de cron suele ser mínimo |
+
+Por eso cron no llama a `python ejemplos/pipeline_ventas.py ...` a pelo: llama a un script que **fija** repo, venv, logs y luego lanza el job.
+
+### Receta en 4 pasos
+
+**1. Escribe el wrapper** `scripts/run_pipeline_ventas.sh`:
 
 ```bash
 #!/usr/bin/env bash
-# scripts/run_pipeline_ventas.sh
 set -euo pipefail
 
+# Ajusta estas dos rutas a TU máquina
 REPO="/Users/TU_USUARIO/icai/dsia-26-27/3_automatizacion_e_ia"
 VENV="/Users/TU_USUARIO/icai/dsia-26-27/.venv"
+
 DAY="$(date +%F)"
 OUT="${REPO}/Datos/salida/${DAY}"
 LOG_DIR="${REPO}/Datos/salida/cron_logs"
 mkdir -p "${OUT}" "${LOG_DIR}"
 
+# Entorno mínimo + venv (cron no trae el tuyo)
 export PATH="/usr/local/bin:/usr/bin:/bin"
+# shellcheck source=/dev/null
 source "${VENV}/bin/activate"
 
 cd "${REPO}"
@@ -402,29 +492,81 @@ python ejemplos/pipeline_ventas.py \
   --output-dir "${OUT}" \
   --max-error-rate 0.1 \
   >> "${LOG_DIR}/ventas_${DAY}.log" 2>&1
+
+echo "OK ${DAY} exit=0" >> "${LOG_DIR}/ventas_${DAY}.log"
 ```
+
+Qué hace cada bloque:
+
+| Bloque | Para qué |
+| --- | --- |
+| `set -euo pipefail` | Si el pipeline sale `1` o `2`, el script aborta (no finge OK) |
+| `REPO` / `VENV` absolutos | Cron no sabe dónde estás |
+| `OUT` con fecha | Artefactos del día; re-ejecutar el mismo día sobrescribe (idempotencia) |
+| `source …/activate` | Mismo Python/deps que en clase |
+| `>> log 2>&1` | Guardar stdout **y** stderr para depurar a la mañana |
+
+**2. Prueba a mano** (obligatorio antes de `crontab -e`):
 
 ```bash
 chmod +x scripts/run_pipeline_ventas.sh
-./scripts/run_pipeline_ventas.sh   # pruébalo a mano antes de cron
-echo $?
+./scripts/run_pipeline_ventas.sh
+echo "exit=$?"
+tail -n 40 Datos/salida/cron_logs/ventas_$(date +%F).log
+cat Datos/salida/$(date +%F)/metrics.json
 ```
 
-```text
-# crontab -e
-# min hora día mes weekday comando
+Si aquí falla, cron también fallará: arregla el wrapper primero.
+
+**3. Programa la línea** (sustituye la ruta):
+
+```bash
+crontab -e
+```
+
+```cron
 15 2 * * * /Users/TU_USUARIO/icai/dsia-26-27/3_automatizacion_e_ia/scripts/run_pipeline_ventas.sh
 ```
 
-| Pitfall | Remedio |
-| --- | --- |
-| PATH vacío en cron | venv absoluto / `source activate` |
-| Rutas relativas | `cd "$REPO"` o paths absolutos |
-| Sin logs | `>> … 2>&1` |
-| `%` en crontab | escapar como `\%` |
-| Portátil dormido a las 02:15 | la corrida no corre (saberlo) |
+**4. Comprueba que disparó** (al día siguiente o tras una prueba con hora cercana):
 
-CI (Tema 2) valida **código**; cron valida/ejecuta la **corrida de datos**. Ambos consumen exit codes.
+```bash
+crontab -l
+ls Datos/salida/cron_logs/
+tail -n 50 Datos/salida/cron_logs/ventas_$(date +%F).log
+cat Datos/salida/$(date +%F)/metrics.json
+```
+
+En clase **basta** con el wrapper + la línea anotada. Instalar cron en el portátil es opcional.
+
+### Variante sin wrapper (solo para entender; no recomendada)
+
+```cron
+15 2 * * * cd /Users/TU_USUARIO/icai/dsia-26-27/3_automatizacion_e_ia && /Users/TU_USUARIO/icai/dsia-26-27/.venv/bin/python ejemplos/pipeline_ventas.py --input Datos/ventas.csv --output-dir Datos/salida/$(date +\%F) --max-error-rate 0.1 >> Datos/salida/cron_logs/ventas.log 2>&1
+```
+
+Notas: hay que escapar `%` como `\%` (cron lo trata especial); la línea es frágil y difícil de mantener → prefiere el `.sh`.
+
+### Fallos típicos
+
+| Síntoma | Causa habitual | Qué hacer |
+| --- | --- | --- |
+| “No corrió” | Portátil suspendido a esa hora | Entenderlo; en servidor/CI es otro mundo |
+| `python: command not found` | PATH / venv | `source` del venv o path absoluto al `python` |
+| `No such file` | cwd relativo | `cd "$REPO"` + paths absolutos |
+| Log vacío / “no pasó nada” | Sin redirección | `>> archivo.log 2>&1` |
+| Corre pero “aprueba” basura | Gate/exit mal | Revisar A2–A3 en el pipeline |
+| Duplica ficheros cada noche | Mala idempotencia | Mismos nombres de artefacto, sobrescribir |
+
+### Cron-ready vs “tengo cron instalado”
+
+| Cron-ready (lo pedimos en DSIA) | Cron instalado (opcional) |
+| --- | --- |
+| CLI estable + exit codes | Línea en `crontab -e` |
+| Wrapper con paths/logs | La máquina encendida a esa hora |
+| Puedes lanzar el wrapper a mano | Evidencia en `cron_logs/` |
+
+Si el wrapper funciona a mano con `echo $?` y deja metrics/log, el job ya es **automatizable**; cron solo pone el despertador.
 
 ---
 
